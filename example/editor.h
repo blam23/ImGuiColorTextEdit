@@ -123,6 +123,8 @@ private:
 	void toggleLineBreak();
 	void clearSquiggles();
 
+	void insertSimplifiedChinese();
+
 	void loadWString();
 
 #if (defined(_MSVC_LANG) && _MSVC_LANG >= 202002L) || (__cplusplus >= 202002L)

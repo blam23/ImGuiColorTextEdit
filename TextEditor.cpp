@@ -23,32 +23,6 @@
 
 
 //
-//	glyph columns reserved on the monospace grid
-//
-//	East Asian wide/fullwidth codepoints (CJK, Hangul, Kana, fullwidth
-//	forms, emoji) render about two cells wide in the fonts that carry
-//	them; reserving two grid cells keeps them from overprinting their
-//	neighbours. Ranges follow Unicode East Asian Width wide/fullwidth.
-//
-
-static size_t glyphColumns(uint32_t codepoint) {
-	if ((codepoint >= 0x1100 && codepoint <= 0x115F)	// Hangul Jamo
-		|| (codepoint >= 0x2E80 && codepoint <= 0xA4CF)	// CJK radicals .. Yi
-		|| (codepoint >= 0xAC00 && codepoint <= 0xD7A3)	// Hangul syllables
-		|| (codepoint >= 0xF900 && codepoint <= 0xFAFF)	// CJK compatibility ideographs
-		|| (codepoint >= 0xFE30 && codepoint <= 0xFE4F)	// CJK compatibility forms
-		|| (codepoint >= 0xFF00 && codepoint <= 0xFF60)	// fullwidth forms
-		|| (codepoint >= 0xFFE0 && codepoint <= 0xFFE6)	// fullwidth signs
-		|| (codepoint >= 0x1F300 && codepoint <= 0x1FAFF)	// emoji
-		|| (codepoint >= 0x20000 && codepoint <= 0x3FFFD)) {	// CJK extension planes
-		return 2;
-	} else {
-		return 1;
-	}
-}
-
-
-//
 //	TextEditor::TextEditor
 //
 
@@ -523,7 +497,6 @@ void TextEditor::renderSquiggles() {
 			// only process all visible columns
 			while (column < endColumn && column <= lastVisibleColumn) {
 				auto& glyph = line[index++];
-				auto codepoint = glyph.codepoint;
 				ImVec2 glyphPos(rowScreenPos.x + column * glyphSize.x, rowScreenPos.y);
 
 				// handle squiggles
@@ -553,14 +526,7 @@ void TextEditor::renderSquiggles() {
 					inSquiggle = false;
 				}
 
-				// handle tabs
-				if (codepoint == '\t') {
-					column += config.tabSize - (column % config.tabSize);
-
-				// handle regular glyphs
-				} else {
-					column += glyphColumns(codepoint);
-				}
+				column += glyph.columns;
 			}
 
 			if (inSquiggle) {
@@ -629,8 +595,6 @@ void TextEditor::renderText() {
 					drawList->AddLine(p2, p4, palette.get(Color::whitespace));
 				}
 
-				column += config.tabSize - (column % config.tabSize);
-
 			// handle spaces
 			} else if (codepoint == ' ') {
 				if (config.showSpaces && column >= firstRenderableColumn) {
@@ -639,16 +603,14 @@ void TextEditor::renderText() {
 					drawList->AddCircleFilled(ImVec2(x, y), 1.5f, palette.get(Color::whitespace), 4);
 				}
 
-				column++;
-
 			// handle regular glyphs
 			} else {
 				if (column >= firstRenderableColumn) {
 					font->RenderChar(drawList, fontSize, glyphPos, palette.get(glyph.color), codepoint);
 				}
-
-				column += glyphColumns(codepoint);
 			}
+
+			column += glyph.columns;
 		}
 
 		// draw ellipsis at the end of folded lines
@@ -2237,7 +2199,7 @@ void TextEditor::compressMarkers() {
 		}
 
 		// remove unused markers
-		size_t i = markers.size();
+		auto i = markers.size();
 
 		do {
 			i--;
@@ -2261,7 +2223,7 @@ void TextEditor::addSquiggle(DocPos start, DocPos end, size_t type, ImU32 color,
 		auto index = squiggles.size();
 
 		document.iterateGlyphs(start, end, [index](Glyph& glyph) {
-			glyph.squiggle = index;
+			glyph.squiggle = static_cast<uint32_t>(index);
 		});
 	}
 }
@@ -2356,7 +2318,7 @@ void TextEditor::compressSquiggles() {
 		}
 
 		// remove unused squiggles
-		size_t i = squiggles.size();
+		auto i = squiggles.size();
 
 		do {
 			i--;
@@ -2716,7 +2678,7 @@ void TextEditor::deindentLines() {
 				size_t index = 0;
 
 				while (column < config.tabSize && index < document[line].size() && std::isblank(document[line][index].codepoint)) {
-					column += document[line][index].codepoint == '\t' ? config.tabSize - (column % config.tabSize) : 1;
+					column += document[line][index].columns;
 					index++;
 				}
 
@@ -3018,21 +2980,21 @@ void TextEditor::tabsToSpaces() {
 		std::string output;
 		auto end = input.end();
 		auto i = input.begin();
-		size_t pos = 0;
+		size_t columns = 0;
 
 		while (i < end) {
 			ImWchar codepoint;
 			i = CodePoint::read(i, end, &codepoint);
 
 			if (codepoint == '\t') {
-				auto spaces = config.tabSize - (pos % config.tabSize);
+				auto spaces = config.tabSize - (columns % config.tabSize);
 				output.append(spaces, ' ');
-				pos += spaces;
+				columns += spaces;
 
 			} else {
 				char utf8[4];
 				output.append(utf8, CodePoint::write(utf8, codepoint));
-				pos++;
+				columns += CodePoint::getGlyphWidth(codepoint);
 			}
 		}
 
@@ -3050,7 +3012,7 @@ void TextEditor::spacesToTabs() {
 		std::string output;
 		auto end = input.end();
 		auto i = input.begin();
-		size_t pos = 0;
+		size_t columns = 0;
 		size_t spaces = 0;
 
 		while (i < end) {
@@ -3062,22 +3024,22 @@ void TextEditor::spacesToTabs() {
 
 			} else {
 				while (spaces) {
-					auto spacesUntilNextTab = config.tabSize - (pos % config.tabSize);
+					auto spacesUntilNextTab = config.tabSize - (columns % config.tabSize);
 
 					if (spacesUntilNextTab == 1) {
 						output += ' ';
-						pos++;
+						columns++;
 						spaces--;
 
 					} else if (spaces >= spacesUntilNextTab) {
 						output += '\t';
-						pos += spacesUntilNextTab;
+						columns += spacesUntilNextTab;
 						spaces -= spacesUntilNextTab;
 
 					} else if (codepoint != '\t')
 						while (spaces) {
 							output += ' ';
-							pos++;
+							columns++;
 							spaces--;
 						}
 
@@ -3088,12 +3050,12 @@ void TextEditor::spacesToTabs() {
 
 				if (codepoint == '\t') {
 					output += '\t';
-					pos += config.tabSize - (pos % config.tabSize);
+					columns += config.tabSize - (columns % config.tabSize);
 
 				} else {
 					char utf8[4];
 					output.append(utf8, CodePoint::write(utf8, codepoint));
-					pos++;
+					columns += CodePoint::getGlyphWidth(codepoint);
 				}
 			}
 		}
@@ -3654,7 +3616,7 @@ TextEditor::DocPos TextEditor::Document::insertText(const Config& config, DocPos
 			index = 0;
 
 		} else if (config.insertSpacesOnTabs && character == '\t') {
-			auto spaces = ((index / config.tabSize) + 1) * config.tabSize - index;
+			auto spaces = getSpacesToTab(config, *line, index);
 
 			for (size_t s = 0; s < spaces; s++) {
 				line->insert(line->begin() + (index++), Glyph(' ', Color::text));
@@ -4462,6 +4424,21 @@ void TextEditor::Document::updateIndents(const Config& config, size_t start, siz
 			}
 		}
 	}
+}
+
+
+//
+//	TextEditor::Document::getSpacesToTab
+//
+
+size_t TextEditor::Document::getSpacesToTab(const Config& config, const Line& line, size_t index) {
+	size_t columns = 0;
+
+	for (size_t i = 0; i < index; i++) {
+		columns += CodePoint::getGlyphWidth(line[i].codepoint);
+	}
+
+	return ((columns / config.tabSize) + 1) * config.tabSize - columns;
 }
 
 
@@ -5669,7 +5646,7 @@ bool TextEditor::MiniMap::update(const Config& config, const Document& document,
 				}
 
 				// process line
-				processLine(line, config, index, column, endColumn);
+				processLine(line, index, column, endColumn);
 			}
 		}
 	}
@@ -5683,13 +5660,7 @@ bool TextEditor::MiniMap::update(const Config& config, const Document& document,
 //	TextEditor::MiniMap::processLine
 //
 
-void TextEditor::MiniMap::processLine(
-	const Line& line,
-	const Config& config,
-	size_t index,
-	size_t column,
-	size_t endColumn) {
-
+void TextEditor::MiniMap::processLine(const Line& line, size_t index, size_t column, size_t endColumn) {
 	auto& row = rows.emplace_back();
 	auto start = column;
 	auto color = Color::background;
@@ -5712,7 +5683,7 @@ void TextEditor::MiniMap::processLine(
 		}
 
 		// update column number
-		column += (glyph.codepoint == '\t') ? (config.tabSize - (column % config.tabSize)) : 1;
+		column += glyph.columns;
 	}
 
 	// handle possible sections at the end of the row
@@ -8008,13 +7979,10 @@ void TextEditor::TypeSetter::wrapLine(Line& line) {
 			lastBreakableIndex = i + 1;
 
 		} else {
-			// get current codepoint
-			auto codepoint = line[i].codepoint;
-
 			// calculate first row indent (if required)
 			if (isAtBeginning) {
-				if (CodePoint::isWhiteSpace(codepoint)) {
-					indent = (codepoint == '\t') ? ((indent / tabSize) + 1) * tabSize : indent + 1;
+				if (CodePoint::isWhiteSpace(line[i].codepoint)) {
+					indent += line[i].columns;
 
 				} else {
 					isAtBeginning = false;
@@ -8022,7 +7990,7 @@ void TextEditor::TypeSetter::wrapLine(Line& line) {
 			}
 
 			// update column count
-			columns = (codepoint == '\t') ? ((columns / tabSize) + 1) * tabSize : columns + glyphColumns(codepoint);
+			columns += line[i].columns;
 
 			if (columns < wordWrapColumns) {
 				// we're not at the end of the row yet so we have to track any break options
@@ -8082,6 +8050,20 @@ void TextEditor::TypeSetter::wrapLine(Line& line) {
 //
 
 void TextEditor::TypeSetter::updateLine(Line& line) {
+	// update glyph widths
+	size_t columns = 0;
+
+	for (auto& glyph : line) {
+		if (glyph.codepoint == '\t') {
+			glyph.columns = static_cast<uint8_t>(tabSize - (columns % tabSize));
+
+		} else {
+			glyph.columns = static_cast<uint8_t>(CodePoint::getGlyphWidth(glyph.codepoint));
+		}
+
+		columns += glyph.columns;
+	}
+
 	if (wordWrap) {
 		// classify all line break opportunities in line
 		lineBreak.classify(line);
@@ -8090,17 +8072,8 @@ void TextEditor::TypeSetter::updateLine(Line& line) {
 		wrapLine(line);
 
 	} else {
-		// text is always 1 row high without wrapping
 		line.rows = 1;
-
-		// determine the maximum column number for this line
-		line.columns = 0;
-
-		for (const auto& glyph : line) {
-			line.columns = (glyph.codepoint == '\t') ? ((line.columns / tabSize) + 1) * tabSize : line.columns + glyphColumns(glyph.codepoint);
-		}
-
-		// reset multiline sections
+		line.columns = columns;
 		line.sections = nullptr;
 	}
 
@@ -8212,7 +8185,7 @@ TextEditor::VisPos TextEditor::TypeSetter::docPos2VisPos(const Document& documen
 				visPos.column = section.indent;
 
 				for (auto glyph = start; glyph < end; glyph++) {
-					visPos.column = (glyph->codepoint == '\t') ? ((visPos.column / tabSize) + 1) * tabSize : visPos.column + glyphColumns(glyph->codepoint);
+					visPos.column += glyph->columns;
 				}
 
 				done = true;
@@ -8223,11 +8196,10 @@ TextEditor::VisPos TextEditor::TypeSetter::docPos2VisPos(const Document& documen
 		}
 
 	} else {
-		// for non-wrapped lines, just handle tabs
 		auto end = line.begin() + pos.index;
 
 		for (auto glyph = line.begin(); glyph < end; glyph++) {
-			visPos.column = (glyph->codepoint == '\t') ? ((visPos.column / tabSize) + 1) * tabSize : visPos.column + glyphColumns(glyph->codepoint);
+			visPos.column += glyph->columns;
 		}
 	}
 
@@ -8277,7 +8249,7 @@ TextEditor::DocPos TextEditor::TypeSetter::visPos2DocPos(const Document& documen
 
 	for (auto glyph = start; rightColumn < pos.column && glyph < end; glyph++) {
 		leftColumn = rightColumn;
-		rightColumn = (glyph->codepoint == '\t') ? ((rightColumn / tabSize) + 1) * tabSize : rightColumn + glyphColumns(glyph->codepoint);
+		rightColumn += glyph->columns;
 		index++;
 	}
 
@@ -8360,7 +8332,7 @@ void TextEditor::TypeSetter::screenPos2DocPos(const Document& document, ImVec2 s
 
 			for (auto glyph = start; static_cast<float>(rightColumn) < screenPos.x && glyph < end; glyph++) {
 				leftColumn = rightColumn;
-				rightColumn = (glyph->codepoint == '\t') ? ((rightColumn / tabSize) + 1) * tabSize : rightColumn + glyphColumns(glyph->codepoint);
+				rightColumn += glyph->columns;
 				index++;
 			}
 
@@ -9613,6 +9585,47 @@ static Range32 eastAsian32[] = {
 
 
 //
+//	wideGlyph16
+//
+
+static Range16 wideGlyph16[] = {
+	{0x1100, 0x115f}, {0x231a, 0x231b}, {0x2329, 0x232a}, {0x23e9, 0x23ec}, {0x23f0, 0x23f0}, {0x23f3, 0x23f3},
+	{0x25fd, 0x25fe}, {0x2614, 0x2615}, {0x2630, 0x2637}, {0x2648, 0x2653}, {0x267f, 0x267f}, {0x268a, 0x268f},
+	{0x2693, 0x2693}, {0x26a1, 0x26a1}, {0x26aa, 0x26ab}, {0x26bd, 0x26be}, {0x26c4, 0x26c5}, {0x26ce, 0x26ce},
+	{0x26d4, 0x26d4}, {0x26ea, 0x26ea}, {0x26f2, 0x26f3}, {0x26f5, 0x26f5}, {0x26fa, 0x26fa}, {0x26fd, 0x26fd},
+	{0x2705, 0x2705}, {0x270a, 0x270b}, {0x2728, 0x2728}, {0x274c, 0x274c}, {0x274e, 0x274e}, {0x2753, 0x2755},
+	{0x2757, 0x2757}, {0x2795, 0x2797}, {0x27b0, 0x27b0}, {0x27bf, 0x27bf}, {0x2b1b, 0x2b1c}, {0x2b50, 0x2b50},
+	{0x2b55, 0x2b55}, {0x2e80, 0x2e99}, {0x2e9b, 0x2ef3}, {0x2f00, 0x2fd5}, {0x2ff0, 0x2fff}, {0x3001, 0x303e},
+	{0x3041, 0x3096}, {0x3099, 0x30ff}, {0x3105, 0x312f}, {0x3131, 0x318e}, {0x3190, 0x31e5}, {0x31ef, 0x321e},
+	{0x3220, 0x3247}, {0x3250, 0xa48c}, {0xa490, 0xa4c6}, {0xa960, 0xa97c}, {0xac00, 0xd7a3}, {0xf900, 0xfaff},
+	{0xfe10, 0xfe19}, {0xfe30, 0xfe52}, {0xfe54, 0xfe66}, {0xfe68, 0xfe6b}
+};
+
+
+//
+//	wideGlyph32
+//
+
+#if defined(IMGUI_USE_WCHAR32)
+
+static Range32 wideGlyph32[] = {
+	{0x16fe0, 0x16fe4}, {0x16ff0, 0x16ff6}, {0x17000, 0x18cd5}, {0x18cff, 0x18d1e}, {0x18d80, 0x18df2}, {0x1aff0, 0x1aff3},
+	{0x1aff5, 0x1affb}, {0x1affd, 0x1affe}, {0x1b000, 0x1b122}, {0x1b132, 0x1b132}, {0x1b150, 0x1b152}, {0x1b155, 0x1b155},
+	{0x1b164, 0x1b167}, {0x1b170, 0x1b2fb}, {0x1d300, 0x1d356}, {0x1d360, 0x1d376}, {0x1f004, 0x1f004}, {0x1f0cf, 0x1f0cf},
+	{0x1f18e, 0x1f18e}, {0x1f191, 0x1f19a}, {0x1f200, 0x1f202}, {0x1f210, 0x1f23b}, {0x1f240, 0x1f248}, {0x1f250, 0x1f251},
+	{0x1f260, 0x1f265}, {0x1f300, 0x1f320}, {0x1f32d, 0x1f335}, {0x1f337, 0x1f37c}, {0x1f37e, 0x1f393}, {0x1f3a0, 0x1f3ca},
+	{0x1f3cf, 0x1f3d3}, {0x1f3e0, 0x1f3f0}, {0x1f3f4, 0x1f3f4}, {0x1f3f8, 0x1f43e}, {0x1f440, 0x1f440}, {0x1f442, 0x1f4fc},
+	{0x1f4ff, 0x1f53d}, {0x1f54b, 0x1f54e}, {0x1f550, 0x1f567}, {0x1f57a, 0x1f57a}, {0x1f595, 0x1f596}, {0x1f5a4, 0x1f5a4},
+	{0x1f5fb, 0x1f64f}, {0x1f680, 0x1f6c5}, {0x1f6cc, 0x1f6cc}, {0x1f6d0, 0x1f6d2}, {0x1f6d5, 0x1f6d8}, {0x1f6dc, 0x1f6df},
+	{0x1f6eb, 0x1f6ec}, {0x1f6f4, 0x1f6fc}, {0x1f7e0, 0x1f7eb}, {0x1f7f0, 0x1f7f0}, {0x1f90c, 0x1f93a}, {0x1f93c, 0x1f945},
+	{0x1f947, 0x1f9ff}, {0x1fa70, 0x1fa7c}, {0x1fa80, 0x1fa8a}, {0x1fa8e, 0x1fac6}, {0x1fac8, 0x1fac8}, {0x1facd, 0x1fadc},
+	{0x1fadf, 0x1faea}, {0x1faef, 0x1faf8}, {0x20000, 0x2fffd}, {0x30000, 0x3fffd}
+};
+
+#endif
+
+
+//
 //	case16
 //
 
@@ -10379,11 +10392,11 @@ bool TextEditor::CodePoint::isUpper(ImWchar codepoint) {
 
 
 //
-//	eastAsianRangeFind
+//	rangeFind
 //
 
 template <typename T, typename C>
-bool eastAsianRangeFind(const T& table, C codepoint) {
+bool rangeFind(const T& table, C codepoint) {
 	auto low = std::begin(table);
 	auto high = std::end(table);
 
@@ -10419,32 +10432,59 @@ bool TextEditor::CodePoint::isEastAsian(ImWchar codepoint) {
 
 #if defined(IMGUI_USE_WCHAR32)
 	if (codepoint >= 0x10000) {
-		result = eastAsianRangeFind(eastAsian32, static_cast<char32_t>(codepoint));
+		result = rangeFind(eastAsian32, static_cast<char32_t>(codepoint));
 
 	} else
 #endif
 
 	{
-		result = eastAsianRangeFind(eastAsian16, static_cast<char16_t>(codepoint));
+		result = rangeFind(eastAsian16, static_cast<char16_t>(codepoint));
 	}
 
 	if (!result) {
 		if ((codepoint >= 0x3400 && codepoint <= 0x4DBF) ||
-			(codepoint >= 0x4E00 && codepoint <= 0x9FFF) ||
-			(codepoint >= 0xF900 && codepoint <= 0xFAFF)
-
-#if defined(IMGUI_USE_WCHAR32)
-			||
-			(codepoint >= 0x20000 && codepoint <= 0x2FFFD) ||
-			(codepoint >= 0x30000 && codepoint <= 0x3FFFD)
-#endif
-		) {
+			(codepoint >= 0x4E00 && codepoint <= 0x9FFF)) {
 
 			result = true;
 		}
 	}
 
 	return result;
+}
+
+
+//
+//	TextEditor::CodePoint::getGlyphWidth
+//
+
+size_t TextEditor::CodePoint::getGlyphWidth(ImWchar codepoint) {
+	// handle simple case
+	if (codepoint < 0x1100) {
+		return 1;
+	}
+
+	bool wide;
+
+#if defined(IMGUI_USE_WCHAR32)
+	if (codepoint >= 0x10000) {
+		wide = rangeFind(wideGlyph32, static_cast<char32_t>(codepoint));
+
+	} else
+#endif
+
+	{
+		wide = rangeFind(wideGlyph16, static_cast<char16_t>(codepoint));
+	}
+
+	if (!wide) {
+		if ((codepoint >= 0x3400 && codepoint <= 0x4DBF) ||
+			(codepoint >= 0x4E00 && codepoint <= 0x9FFF)) {
+
+			wide = true;
+		}
+	}
+
+	return wide ? 2 : 1;
 }
 
 

@@ -25,6 +25,7 @@ add_executable(example
 	${EXTRAS}
 	editor.cpp
 	dejavu.cpp
+	notosans.cpp
 	main.cpp)
 
 if(D3D11)

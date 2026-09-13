@@ -12,5 +12,5 @@
 //	Static variables
 //
 
-extern const unsigned int dejavu[258552 / 4];
-static constexpr int dejavuSize = 258552;
+extern const unsigned int notosans[1733704 / 4];
+static constexpr int notosansSize = 1733704;

@@ -25,6 +25,7 @@
 
 #include "editor.h"
 #include "dejavu.h"
+#include "notosans.h"
 
 
 //
@@ -95,14 +96,22 @@ int example() {
 	initInfo.MSAASamples = SDL_GPU_SAMPLECOUNT_1;
 	ImGui_ImplSDLGPU3_Init(&initInfo);
 
-	// setup our font
+	// setup our fonts
 	io.Fonts->Clear();
 
-	ImFontConfig config;
-	std::copy_n("DejaVu", 7, config.Name);
-	config.FontLoaderFlags = ImGuiFreeTypeLoaderFlags_LightHinting;
-	config.FontDataOwnedByAtlas = false;
-	io.Fonts->AddFontFromMemoryCompressedTTF(static_cast<const void*>(&dejavu), dejavuSize, 15.0f, &config);
+	ImFontConfig dejaVuConfig;
+	std::copy_n("DejaVu", 7, dejaVuConfig.Name);
+	dejaVuConfig.FontLoaderFlags = ImGuiFreeTypeLoaderFlags_LightHinting;
+	dejaVuConfig.FontDataOwnedByAtlas = false;
+	io.Fonts->AddFontFromMemoryCompressedTTF(static_cast<const void*>(&dejavu), dejavuSize, 15.0f, &dejaVuConfig);
+
+	ImFontConfig notoSansConfig;
+	std::copy_n("NotoSansSC", 11, notoSansConfig.Name);
+	notoSansConfig.FontLoaderFlags = ImGuiFreeTypeLoaderFlags_LightHinting;
+	notoSansConfig.FontDataOwnedByAtlas = false;
+	notoSansConfig.MergeMode = true;
+	io.Fonts->AddFontFromMemoryCompressedTTF(static_cast<const void*>(&notosans), notosansSize, 15.0f, &notoSansConfig);
+
 
 	// main loop
 	Editor editor;
