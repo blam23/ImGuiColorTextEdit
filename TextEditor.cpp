@@ -1837,8 +1837,7 @@ void TextEditor::shrinkSelections() {
 //	TextEditor::isAnySelectionActive
 //
 
-bool TextEditor::isAnySelectionActive()
-{
+bool TextEditor::isAnySelectionActive() {
 	for (auto& cursor : cursors) {
 		if (cursor.hasSelection()) {
 			return true;
